@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>旗山醫院藥劑科 360度評估儀表板</title>
+    <!-- STREAMING_CHUNK:載入外部資源與套件 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- 引入 WordCloud2 套件製作文字雲 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/wordcloud2.js/1.2.2/wordcloud2.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&display=swap" rel="stylesheet">
+    
+    <!-- STREAMING_CHUNK:定義樣式與 A4 列印排版 -->
+    <style>
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #f3f4f6; }
+        .card { background: white; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); padding: 1.5rem; }
+        .feedback-container::-webkit-scrollbar { width: 8px; }
+        .feedback-container::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
+        .feedback-container::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        .feedback-container::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        .card-disabled { opacity: 0.4; filter: grayscale(100%); transition: 0.3s; }
+        
+        /* 列印專用 A4 設定 */
+        @page { size: A4; margin: 12mm; }
+        @media print {
+            body { 
+                background-color: white !important; 
+                -webkit-print-color-adjust: exact; 
+                print-color-adjust: exact; 
+            }
+            .no-print { display: none !important; }
+            .print-only { display: block !important; }
+            .card { 
+                box-shadow: none !important; 
+                border: 1px solid #e5e7eb !important; 
+                break-inside: avoid; 
+                page-break-inside: avoid; 
+                margin-bottom: 1rem; 
+            }
+            /* 列印時解除限制高度，讓所有回饋意見都能印出 */
+            .feedback-container { 
+                max-height: none !important; 
+                overflow: visible !important; 
+            }
+            .max-w-\[1400px\] { max-w: none !important; width: 100% !important; }
+        }
+    </style>
+</head>
+<body class="text-gray-800 p-4 md:p-8">
+
+    <div class="max-w-[1400px] mx-auto space-y-6">
+        
+        <!-- STREAMING_CHUNK:列印專屬表頭 (僅在列印時顯示) -->
+        <div class="hidden print-only text-center mb-6 border-b-2 border-gray-800 pb-4">
+            <h1 class="text-3xl font-bold text-gray-900">旗山醫院藥劑科 360度評估報表</h1>
+            <div class="mt-2 text-lg text-gray-700 flex justify-center gap-6">
+                <span>受評學員：<strong id="print-trainee-name">--</strong></span>
+                <span>評估區間：<strong id="print-date-range">全部時間</strong></span>
+            </div>
+        </div>
+
+        <!-- STREAMING_CHUNK:網頁版主選單控制列 -->
+        <header class="no-print flex flex-col xl:flex-row justify-between items-start xl:items-center bg-white p-6 rounded-xl shadow-sm border border-gray-100 relative gap-4">
+            
+            <div id="loading-overlay" class="absolute inset-0 bg-white/90 rounded-xl flex items-center justify-center z-20">
+                <div class="flex items-center gap-2 text-blue-600 font-medium">
+                    <svg class="animate-spin h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                    <span id="loading-text">正在同步試算表資料... (首次載入可能需要幾秒鐘)</span>
+                </div>
+            </div>
+
+            <div>
+                <h1 class="text-2xl font-bold text-gray-800">旗山醫院藥劑科 360度評估</h1>
+                <p class="text-gray-500 text-sm mt-1">系統自動抓取最新表單回覆</p>
+            </div>
+            
+            <div class="flex flex-col sm:flex-row items-end gap-3 w-full xl:w-auto">
+                <div class="w-full sm:w-auto">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">選擇受評學員</label>
+                    <div class="flex gap-2">
+                        <select id="traineeSelect" class="block w-full sm:w-48 pl-3 pr-8 py-2 text-sm border-gray-300 rounded-md bg-gray-50 border focus:ring-blue-500 focus:border-blue-500">
+                            <option value="">載入中...</option>
+                        </select>
+                        <button onclick="openAliasModal()" class="p-2 bg-white border border-gray-300 rounded-md text-gray-600 hover:bg-gray-50 shadow-sm transition" title="設定姓名合併規則">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- 新增列印按鈕 -->
+                <button onclick="window.print()" class="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 bg-gray-800 text-white rounded-md shadow-sm hover:bg-gray-700 transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+                    列印 A4 報表
+                </button>
+            </div>
+        </header>
+
+        <!-- STREAMING_CHUNK:篩選按鈕列 -->
+        <div class="no-print bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col gap-4">
+            <div class="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 border-b border-gray-100 pb-3">
+                <span class="text-sm font-semibold text-gray-700 whitespace-nowrap min-w-[80px]">評估年度：</span>
+                <div id="year-btn-group" class="flex flex-wrap gap-2"></div>
+            </div>
+            <div class="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 border-b border-gray-100 pb-3">
+                <span class="text-sm font-semibold text-gray-700 whitespace-nowrap min-w-[80px]">評估月份：</span>
+                <div id="month-btn-group" class="flex flex-wrap gap-2"></div>
+            </div>
+            <div class="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4">
+                <span class="text-sm font-semibold text-gray-700 whitespace-nowrap min-w-[80px]">顯示角色：</span>
+                <div class="flex flex-wrap gap-3">
+                    <label class="inline-flex items-center cursor-pointer hover:bg-gray-50 px-2 py-1 rounded"><input type="checkbox" value="self" class="role-toggle w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500" checked><span class="ml-2 text-sm font-medium text-gray-700">自我評估</span></label>
+                    <label class="inline-flex items-center cursor-pointer hover:bg-gray-50 px-2 py-1 rounded"><input type="checkbox" value="director" class="role-toggle w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-purple-500" checked><span class="ml-2 text-sm font-medium text-gray-700">主任評分</span></label>
+                    <label class="inline-flex items-center cursor-pointer hover:bg-gray-50 px-2 py-1 rounded"><input type="checkbox" value="leader" class="role-toggle w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500" checked><span class="ml-2 text-sm font-medium text-gray-700">組長評分</span></label>
+                    <label class="inline-flex items-center cursor-pointer hover:bg-gray-50 px-2 py-1 rounded"><input type="checkbox" value="colleague" class="role-toggle w-4 h-4 text-teal-600 rounded border-gray-300 focus:ring-teal-500" checked><span class="ml-2 text-sm font-medium text-gray-700">同事評分</span></label>
+                    <label class="inline-flex items-center cursor-pointer hover:bg-gray-50 px-2 py-1 rounded"><input type="checkbox" value="peer" class="role-toggle w-4 h-4 text-emerald-600 rounded border-gray-300 focus:ring-emerald-500" checked><span class="ml-2 text-sm font-medium text-gray-700">同儕評分</span></label>
+                    <label class="inline-flex items-center cursor-pointer hover:bg-gray-50 px-2 py-1 rounded"><input type="checkbox" value="mentor" class="role-toggle w-4 h-4 text-amber-600 rounded border-gray-300 focus:ring-amber-500" checked><span class="ml-2 text-sm font-medium text-gray-700">導師評分</span></label>
+                </div>
+            </div>
+        </div>
+
+        <!-- STREAMING_CHUNK:六大職級評分卡 -->
+        <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4 print:grid-cols-3">
+            <div id="card-self" class="card bg-gradient-to-br from-blue-50 to-white border border-blue-100 relative overflow-hidden p-4 transition-all">
+                <h3 class="text-xs font-medium text-gray-500 relative z-10">自我評估</h3>
+                <div class="mt-1 flex items-baseline gap-1 relative z-10"><span class="text-2xl font-bold text-blue-600" id="score-self">--</span><span class="text-xs text-gray-400">/ 5</span></div>
+            </div>
+            <div id="card-director" class="card bg-gradient-to-br from-purple-50 to-white border border-purple-100 relative overflow-hidden p-4 transition-all">
+                <h3 class="text-xs font-medium text-gray-500 relative z-10">主任評分</h3>
+                <div class="mt-1 flex items-baseline gap-1 relative z-10"><span class="text-2xl font-bold text-purple-600" id="score-director">--</span><span class="text-xs text-gray-400">/ 5</span></div>
+            </div>
+            <div id="card-leader" class="card bg-gradient-to-br from-indigo-50 to-white border border-indigo-100 relative overflow-hidden p-4 transition-all">
+                <h3 class="text-xs font-medium text-gray-500 relative z-10">組長評分</h3>
+                <div class="mt-1 flex items-baseline gap-1 relative z-10"><span class="text-2xl font-bold text-indigo-600" id="score-leader">--</span><span class="text-xs text-gray-400">/ 5</span></div>
+            </div>
+            <div id="card-colleague" class="card bg-gradient-to-br from-teal-50 to-white border border-teal-100 relative overflow-hidden p-4 transition-all">
+                <h3 class="text-xs font-medium text-gray-500 relative z-10">同事評分</h3>
+                <div class="mt-1 flex items-baseline gap-1 relative z-10"><span class="text-2xl font-bold text-teal-600" id="score-colleague">--</span><span class="text-xs text-gray-400">/ 5</span></div>
+            </div>
+            <div id="card-peer" class="card bg-gradient-to-br from-emerald-50 to-white border border-emerald-100 relative overflow-hidden p-4 transition-all">
+                <h3 class="text-xs font-medium text-gray-500 relative z-10">同儕評分</h3>
+                <div class="mt-1 flex items-baseline gap-1 relative z-10"><span class="text-2xl font-bold text-emerald-600" id="score-peer">--</span><span class="text-xs text-gray-400">/ 5</span></div>
+            </div>
+            <div id="card-mentor" class="card bg-gradient-to-br from-amber-50 to-white border border-amber-100 relative overflow-hidden p-4 transition-all">
+                <h3 class="text-xs font-medium text-gray-500 relative z-10">導師評分</h3>
+                <div class="mt-1 flex items-baseline gap-1 relative z-10"><span class="text-2xl font-bold text-amber-600" id="score-mentor">--</span><span class="text-xs text-gray-400">/ 5</span></div>
+            </div>
+        </div>
+
+        <!-- STREAMING_CHUNK:圖表區 -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div class="card flex flex-col items-center">
+                <h3 class="text-lg font-semibold mb-4 self-start w-full border-b pb-2">五大核心職能雷達圖</h3>
+                <div class="w-full max-w-md relative flex-grow flex items-center justify-center min-h-[350px]">
+                    <canvas id="radarChart"></canvas>
+                </div>
+            </div>
+            <div class="card flex flex-col">
+                <h3 class="text-lg font-semibold mb-4 border-b pb-2">各維度得分詳情</h3>
+                <div class="flex-grow relative min-h-[350px] w-full">
+                    <canvas id="barChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- STREAMING_CHUNK:文字雲與回饋意見區 -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- 文字雲 -->
+            <div class="card flex flex-col">
+                <h3 class="text-lg font-semibold mb-4 border-b pb-2 flex items-center gap-2">
+                    <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"></path></svg>
+                    特質文字雲 (自動萃取)
+                </h3>
+                <div id="wordcloud-container" class="w-full h-[350px] relative flex items-center justify-center bg-gray-50/50 rounded-lg border border-gray-100">
+                    <canvas id="wordCloudCanvas" class="w-full h-full"></canvas>
+                    <div id="wordcloud-empty" class="absolute inset-0 flex items-center justify-center text-gray-400 text-sm italic hidden">
+                        回饋文字量不足，無法產生文字雲
+                    </div>
+                </div>
+            </div>
+
+            <!-- 回饋意見清單 -->
+            <div class="card flex flex-col">
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 border-b pb-2 gap-3">
+                    <h3 class="text-lg font-semibold flex items-center gap-2">
+                        <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path></svg>
+                        具體回饋意見
+                    </h3>
+                    <label class="no-print relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="filterFeedbackToggle" class="sr-only peer" checked>
+                        <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                        <span class="ml-3 text-sm font-medium text-gray-700">精簡無效回覆</span>
+                    </label>
+                </div>
+                <div id="feedback-list" class="space-y-3 max-h-[350px] overflow-y-auto feedback-container pr-2">
+                    <!-- 動態生成 -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- STREAMING_CHUNK:姓名合併 Modal (不列印) -->
+    <div id="aliasModal" class="no-print hidden fixed inset-0 bg-gray-900 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center backdrop-blur-sm transition-opacity">
+        <div class="relative mx-auto p-6 border w-[90%] max-w-md shadow-xl rounded-xl bg-white">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-bold text-gray-800">合併相同學員名稱</h3>
+                <button onclick="closeAliasModal()" class="text-gray-400 hover:text-gray-600 transition-colors">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <div class="mb-4 text-sm text-gray-600"><p>將錯字或別名指向正確名稱 (例如：修言 ➔ 宋修言)。</p></div>
+            <div class="bg-gray-50 p-4 rounded-lg mb-4 border border-gray-100">
+                <div class="flex gap-2 items-end">
+                    <div class="flex-1">
+                        <label class="block text-xs text-gray-500 mb-1">錯誤名稱</label>
+                        <select id="sourceNameSelect" class="w-full text-sm border-gray-300 rounded-md shadow-sm p-2 border bg-white"></select>
+                    </div>
+                    <div class="text-gray-400 pb-2">➔</div>
+                    <div class="flex-1">
+                        <label class="block text-xs text-gray-500 mb-1">正確名稱</label>
+                        <select id="targetNameSelect" class="w-full text-sm border-gray-300 rounded-md shadow-sm p-2 border bg-white"></select>
+                    </div>
+                </div>
+                <button onclick="addAliasRule()" class="mt-3 w-full bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 font-medium py-2 rounded-md text-sm transition-colors">+ 新增規則</button>
+            </div>
+            <div id="aliasRulesList" class="space-y-2 max-h-[200px] overflow-y-auto"></div>
+        </div>
+    </div>
+
+    <!-- STREAMING_CHUNK:腳本與邏輯 -->
+    <script>
+        const DIMENSIONS = ['專業能力', '個人及專業的成長', '態度', '溝通', '正向積極'];
+        let rawData = [];
+        let radarChartInstance = null; let barChartInstance = null;
+        let currentSelectedTrainee = null; let filterEmptyFeedback = true;
+        let currentSelectedYear = 'all'; let currentSelectedMonth = 'all';
+        let activeRoles = { self: true, director: true, leader: true, colleague: true, peer: true, mentor: true };
+
+        const defaultAliases = { '修言': '宋修言', '張竺閔': '張筑閔', '筑閔': '張筑閔', '林亦辰': '林奕辰' };
+        let nameAliases = JSON.parse(localStorage.getItem('traineeNameAliases')) || defaultAliases;
+
+        const CHART_COLORS = {
+            self: { border: 'rgba(37, 99, 235, 1)' }, director: { border: 'rgba(147, 51, 234, 1)' },
+            leader: { border: 'rgba(79, 70, 229, 1)' }, colleague: { border: 'rgba(13, 148, 136, 1)' },
+            peer: { border: 'rgba(5, 150, 105, 1)' }, mentor: { border: 'rgba(217, 119, 6, 1)' }
+        };
+        const ROLE_NAMES = { self: '自我評估', director: '主任評分', leader: '組長評分', colleague: '同事評分', peer: '同儕評分', mentor: '導師評分' };
+
+        window.onload = function() {
+            document.getElementById('filterFeedbackToggle').onchange = (e) => { filterEmptyFeedback = e.target.checked; triggerUpdate(); };
+            document.querySelectorAll('.role-toggle').forEach(checkbox => { checkbox.addEventListener('change', (e) => { activeRoles[e.target.value] = e.target.checked; triggerUpdate(); }); });
+            fetchData();
+        };
+
+        function fetchData() {
+            google.script.run
+                .withSuccessHandler(function(responseStr) {
+                    const response = JSON.parse(responseStr);
+                    if (response.error) {
+                        alert("讀取資料發生錯誤：" + response.error);
+                        document.getElementById('loading-text').innerText = '載入失敗';
+                        return;
+                    }
+                    rawData = response;
+                    document.getElementById('loading-overlay').style.display = 'none';
+                    initDashboard();
+                })
+                .withFailureHandler(function(err) {
+                    alert("與伺服器連線失敗，請確認網路連線。");
+                    document.getElementById('loading-text').innerText = '載入失敗';
+                })
+                .getSheetData();
+        }
+
+        function triggerUpdate() { if (currentSelectedTrainee) updateDashboard(currentSelectedTrainee); }
+
+        function initDashboard() {
+            const traineeSet = new Set();
+            rawData.forEach(row => {
+                let name = row['學員名字']?.trim();
+                if (name && name !== '無') traineeSet.add(getNormalizedName(name));
+            });
+            const trainees = Array.from(traineeSet).sort();
+            const selectEl = document.getElementById('traineeSelect');
+            selectEl.innerHTML = '';
+            if (trainees.length === 0) { selectEl.innerHTML = '<option value="">無資料</option>'; return; }
+            trainees.forEach(t => selectEl.innerHTML += `<option value="${t}">${t}</option>`);
+            selectEl.onchange = (e) => updateDashboard(e.target.value);
+            
+            initDateFilters();
+            initCharts();
+            updateDashboard(trainees[0]);
+        }
+
+        function parseDateString(dateStr) {
+            if (!dateStr) return null;
+            let str = String(dateStr).trim();
+            const match = str.match(/^(\d{2,4})[./年\-]0*(\d{1,2})/);
+            if (match) {
+                let y = parseInt(match[1], 10);
+                let m = parseInt(match[2], 10);
+                if (y < 1911) y += 1911; 
+                return { year: y, month: m };
+            }
+            if (str.includes('T') || str.includes('-')) {
+                const d = new Date(str);
+                if (!isNaN(d.getTime())) {
+                    let y = d.getFullYear();
+                    if (y < 1911) y += 1911; 
+                    return { year: y, month: d.getMonth() + 1 };
+                }
+            }
+            return null;
+        }
+
+        function initDateFilters() {
+            const yearSet = new Set();
+            const monthSet = new Set();
+
+            rawData.forEach(row => {
+                const parsed = parseDateString(row['評估日期'] || row['時間戳記']);
+                if (parsed) {
+                    yearSet.add(parsed.year);
+                    monthSet.add(parsed.month);
+                }
+            });
+
+            const years = Array.from(yearSet).sort((a, b) => b - a);
+            const months = Array.from(monthSet).sort((a, b) => a - b);
+
+            renderButtonGroups('year-btn-group', years, currentSelectedYear, 'year', '年');
+            renderButtonGroups('month-btn-group', months, currentSelectedMonth, 'month', '月');
+        }
+
+        function renderButtonGroups(containerId, items, currentValue, type, suffix) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+            
+            const allBtn = document.createElement('button');
+            allBtn.innerText = '全部';
+            allBtn.className = getBtnClass(currentValue === 'all');
+            allBtn.onclick = () => handleFilterChange(type, 'all');
+            container.appendChild(allBtn);
+
+            items.forEach(item => {
+                const btn = document.createElement('button');
+                const displayText = type === 'month' ? String(item).padStart(2, '0') + suffix : item + suffix;
+                btn.innerText = displayText;
+                btn.className = getBtnClass(currentValue === String(item));
+                btn.onclick = () => handleFilterChange(type, String(item));
+                container.appendChild(btn);
+            });
+        }
+
+        function getBtnClass(isActive) {
+            const base = "px-4 py-1.5 text-sm font-medium rounded-md transition-colors border focus:outline-none ";
+            if (isActive) return base + "bg-blue-500 text-white border-blue-500 shadow-sm hover:bg-blue-600";
+            else return base + "bg-white text-gray-700 border-gray-300 hover:bg-gray-50";
+        }
+
+        function handleFilterChange(type, value) {
+            if (type === 'year') currentSelectedYear = value;
+            if (type === 'month') currentSelectedMonth = value;
+            initDateFilters(); 
+            triggerUpdate();
+        }
+
+        function mapRoleCategory(role) {
+            if (!role) return 'other';
+            if (role.includes('學員自己')) return 'self';
+            if (role.includes('主任')) return 'director';
+            if (role.includes('組長')) return 'leader';
+            if (role.includes('同事')) return 'colleague';
+            if (role.includes('同儕')) return 'peer';
+            if (role.includes('生活輔導教師') || role.includes('導師')) return 'mentor';
+            return 'other';
+        }
+
+        function getScoreFromRow(row, dimensionKeyword) {
+            const key = Object.keys(row).find(k => k.includes(dimensionKeyword));
+            if (key) {
+                const val = parseFloat(row[key]);
+                return isNaN(val) ? null : val;
+            }
+            return null;
+        }
+
+        function calculateAverages(filteredData) {
+            const totals = {
+                self: { counts: [0,0,0,0,0], sums: [0,0,0,0,0] }, director: { counts: [0,0,0,0,0], sums: [0,0,0,0,0] },
+                leader: { counts: [0,0,0,0,0], sums: [0,0,0,0,0] }, colleague: { counts: [0,0,0,0,0], sums: [0,0,0,0,0] },
+                peer: { counts: [0,0,0,0,0], sums: [0,0,0,0,0] }, mentor: { counts: [0,0,0,0,0], sums: [0,0,0,0,0] }
+            };
+            filteredData.forEach(row => {
+                const category = mapRoleCategory(row['評核者職務']);
+                if (totals[category]) {
+                    DIMENSIONS.forEach((dim, index) => {
+                        const score = getScoreFromRow(row, dim);
+                        if (score !== null) { totals[category].sums[index] += score; totals[category].counts[index] += 1; }
+                    });
+                }
+            });
+            const result = {};
+            Object.keys(totals).forEach(cat => { result[cat] = totals[cat].sums.map((sum, idx) => totals[cat].counts[idx] > 0 ? (sum / totals[cat].counts[idx]).toFixed(1) : null); });
+            return result;
+        }
+
+        // STREAMING_CHUNK:核心更新邏輯
+        function updateDashboard(traineeName) {
+            if (!traineeName) return;
+            currentSelectedTrainee = traineeName;
+            
+            // 更新列印表頭顯示資訊
+            document.getElementById('print-trainee-name').innerText = traineeName;
+            let dateStr = '';
+            if(currentSelectedYear !== 'all') dateStr += currentSelectedYear + '年 ';
+            if(currentSelectedMonth !== 'all') dateStr += currentSelectedMonth + '月';
+            document.getElementById('print-date-range').innerText = dateStr === '' ? '全部時間' : dateStr;
+
+            let traineeData = rawData.filter(row => getNormalizedName(row['學員名字']) === traineeName);
+            
+            if (currentSelectedYear !== 'all' || currentSelectedMonth !== 'all') {
+                traineeData = traineeData.filter(row => {
+                    const parsed = parseDateString(row['評估日期'] || row['時間戳記']);
+                    if (!parsed) return false;
+                    let match = true;
+                    if (currentSelectedYear !== 'all' && String(parsed.year) !== currentSelectedYear) match = false;
+                    if (currentSelectedMonth !== 'all' && String(parsed.month) !== currentSelectedMonth) match = false;
+                    return match;
+                });
+            }
+
+            const averages = calculateAverages(traineeData);
+            
+            Object.keys(averages).forEach(roleKey => {
+                const avgArray = averages[roleKey];
+                const validScores = avgArray.filter(v => v !== null).map(v => parseFloat(v));
+                const el = document.getElementById(`score-${roleKey}`);
+                const cardEl = document.getElementById(`card-${roleKey}`);
+                
+                if (validScores.length > 0) {
+                    const totalAvg = validScores.reduce((a,b) => a+b, 0) / validScores.length;
+                    el.textContent = totalAvg.toFixed(1);
+                } else { el.textContent = '--'; }
+
+                if (activeRoles[roleKey]) cardEl.classList.remove('card-disabled');
+                else cardEl.classList.add('card-disabled');
+            });
+            
+            updateCharts(averages); 
+            updateFeedbackList(traineeData);
+            updateWordCloud(traineeData); // 啟動文字雲渲染
+        }
+
+        function initCharts() {
+            const chartOptions = {
+                responsive: true, maintainAspectRatio: false,
+                scales: { r: { min: 0, max: 5, ticks: { stepSize: 1 } }, y: { beginAtZero: true, max: 5 } },
+                plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } } }
+            };
+            radarChartInstance = new Chart(document.getElementById('radarChart').getContext('2d'), { type: 'radar', data: { labels: DIMENSIONS, datasets: [] }, options: { ...chartOptions, scales: { r: chartOptions.scales.r } } });
+            barChartInstance = new Chart(document.getElementById('barChart').getContext('2d'), { type: 'bar', data: { labels: DIMENSIONS, datasets: [] }, options: { ...chartOptions, scales: { y: chartOptions.scales.y } } });
+        }
+
+        function updateCharts(averages) {
+            const radarDatasets = []; const barDatasets = [];
+            Object.keys(averages).forEach(roleKey => {
+                if (!activeRoles[roleKey]) return;
+                const dataArray = averages[roleKey];
+                if (dataArray.every(val => val === null)) return;
+                const cleanData = dataArray.map(v => v === null ? 0 : parseFloat(v));
+                radarDatasets.push({ label: ROLE_NAMES[roleKey], data: cleanData, backgroundColor: 'rgba(0,0,0,0)', borderColor: CHART_COLORS[roleKey].border, borderWidth: 2, pointBackgroundColor: CHART_COLORS[roleKey].border });
+                barDatasets.push({ label: ROLE_NAMES[roleKey], data: cleanData, backgroundColor: CHART_COLORS[roleKey].border, borderColor: CHART_COLORS[roleKey].border, borderWidth: 1 });
+            });
+            radarChartInstance.data.datasets = radarDatasets; radarChartInstance.update();
+            barChartInstance.data.datasets = barDatasets; barChartInstance.update();
+        }
+
+        function updateFeedbackList(data) {
+            const listEl = document.getElementById('feedback-list'); listEl.innerHTML = '';
+            let hasFeedback = false;
+            data.forEach(row => {
+                const feedback = row['回饋意見'] || row['具體優勢與待發展領域'];
+                const role = row['評核者職務'] || '未知職務';
+                const dateStr = row['評估日期'] || row['時間戳記'] || '';
+                const roleKey = mapRoleCategory(role);
+                
+                const parsedDate = parseDateString(dateStr);
+                const displayDate = parsedDate ? `${parsedDate.year}/${String(parsedDate.month).padStart(2, '0')}` : dateStr.split('T')[0];
+                
+                let badgeColor = 'bg-gray-200 text-gray-700';
+                if(roleKey==='self') badgeColor = 'bg-blue-100 text-blue-800'; if(roleKey==='director') badgeColor = 'bg-purple-100 text-purple-800';
+                if(roleKey==='leader') badgeColor = 'bg-indigo-100 text-indigo-800'; if(roleKey==='colleague') badgeColor = 'bg-teal-100 text-teal-800';
+                if(roleKey==='peer') badgeColor = 'bg-emerald-100 text-emerald-800'; if(roleKey==='mentor') badgeColor = 'bg-amber-100 text-amber-800';
+
+                const isEmptyFeedback = !feedback || feedback.trim() === '' || feedback.trim() === '無' || feedback.trim() === '0';
+                if (filterEmptyFeedback && isEmptyFeedback) return;
+                if (!feedback || feedback.trim() === '') return;
+                hasFeedback = true;
+
+                const item = document.createElement('div');
+                item.className = 'bg-gray-50 border border-gray-200 p-4 rounded-lg text-sm transition hover:shadow-md page-break-inside-avoid';
+                const textStyle = isEmptyFeedback ? 'text-gray-400 italic' : 'text-gray-700 leading-relaxed';
+                item.innerHTML = `<div class="flex justify-between items-center mb-2"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${badgeColor}">${role}</span><span class="text-gray-400 text-xs">${displayDate}</span></div><p class="${textStyle}">${String(feedback).replace(/\n/g, '<br>')}</p>`;
+                listEl.appendChild(item);
+            });
+            if (!hasFeedback) listEl.innerHTML = '<p class="text-gray-400 text-sm italic py-4 text-center">目前選擇的條件下沒有回饋意見。</p>';
+        }
+
+        // STREAMING_CHUNK:文字雲分析引擎
+        function updateWordCloud(data) {
+            const canvas = document.getElementById('wordCloudCanvas');
+            const container = document.getElementById('wordcloud-container');
+            const emptyMsg = document.getElementById('wordcloud-empty');
+            
+            // 設定正確的 canvas 尺寸解析度
+            canvas.width = container.offsetWidth;
+            canvas.height = container.offsetHeight;
+            
+            // 1. 蒐集所有回饋文字
+            let fullText = '';
+            data.forEach(row => {
+                const roleKey = mapRoleCategory(row['評核者職務']);
+                if (!activeRoles[roleKey]) return; // 未勾選的角色不納入文字雲
+                
+                let feedback = row['回饋意見'] || row['具體優勢與待發展領域'];
+                if (feedback && feedback.trim() !== '無' && feedback.trim() !== '0') {
+                    fullText += feedback + '。';
+                }
+            });
+
+            if (fullText.trim().length < 5) {
+                emptyMsg.classList.remove('hidden');
+                const ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                return;
+            } else {
+                emptyMsg.classList.add('hidden');
+            }
+
+            // 2. 建立關鍵字字典 (預設常見的高頻 360 評價詞彙)
+            const commonKeywords = ['認真', '負責', '積極', '主動', '細心', '學習', '進步', '溝通', '態度', '專業', '熱心', '合作', '親切', '努力', '優秀', '準時', '抗壓', '良好', '熱忱', '不足', '待加強', '粗心', '團隊', '融洽', '反應', '效率', '配合', '友善', '耐心', '獨立', '能力', '表現', '負責盡職', '值得肯定'];
+            
+            let counts = {};
+            
+            // (A) 強制配對常見關鍵字
+            commonKeywords.forEach(kw => {
+                const regex = new RegExp(kw, 'g');
+                const matches = fullText.match(regex);
+                if (matches) counts[kw] = (counts[kw] || 0) + matches.length;
+            });
+
+            // (B) 自動分割短句 (捕捉字典以外的特殊形容)
+            const phrases = fullText.split(/[，。！、；：\n\s()（）「」]+/);
+            phrases.forEach(p => {
+                let cleanP = p.trim();
+                // 擷取 2~4 個字的片語，且過濾掉過多贅字的句子
+                if (cleanP.length >= 2 && cleanP.length <= 4) {
+                    if (!/^(的是|真的|覺得|可以|就是|因為|所以|然後|比較|非常|很棒|很好)$/.test(cleanP) && !counts[cleanP]) {
+                        counts[cleanP] = (counts[cleanP] || 0) + 1;
+                    }
+                }
+            });
+
+            // 3. 轉換為 WordCloud2 接受的陣列格式
+            let wordList = Object.keys(counts).map(k => [k, counts[k]]);
+            wordList.sort((a, b) => b[1] - a[1]);
+            wordList = wordList.slice(0, 45); // 取前 45 名
+
+            // 若權重太小會看不見，進行線性放大
+            const maxCount = wordList.length > 0 ? wordList[0][1] : 1;
+            const minSize = 16;
+            const maxSize = 50;
+            
+            wordList = wordList.map(w => {
+                const size = maxCount === 1 ? minSize : minSize + ((w[1] - 1) / (maxCount - 1)) * (maxSize - minSize);
+                return [w[0], size];
+            });
+
+            // 4. 渲染文字雲
+            const brandColors = ['#2563eb', '#9333ea', '#0d9488', '#059669', '#d97706', '#475569', '#3b82f6'];
+            
+            // 延遲渲染確保 Canvas 尺寸已穩定
+            setTimeout(() => {
+                WordCloud(canvas, {
+                    list: wordList,
+                    fontFamily: 'Noto Sans TC, sans-serif',
+                    weightFactor: 1, // 已經手動算好 size 了
+                    color: function() { return brandColors[Math.floor(Math.random() * brandColors.length)]; },
+                    rotateRatio: 0, // 中文維持水平閱讀體驗最好
+                    backgroundColor: 'transparent',
+                    gridSize: Math.round(16 * document.getElementById('wordcloud-container').offsetWidth / 1024),
+                    shape: 'circle'
+                });
+            }, 100);
+        }
+
+        // STREAMING_CHUNK:雜項輔助功能
+        function getNormalizedName(rawName) { return nameAliases[rawName?.trim()] || rawName?.trim(); }
+        
+        function openAliasModal() {
+            document.getElementById('aliasModal').classList.remove('hidden');
+            const rawNamesSet = new Set();
+            rawData.forEach(row => { const n = row['學員名字']?.trim(); if (n && n !== '無') rawNamesSet.add(n); });
+            const rawNames = Array.from(rawNamesSet).sort();
+            ['sourceNameSelect', 'targetNameSelect'].forEach(id => {
+                const sel = document.getElementById(id); sel.innerHTML = '<option value="">請選擇...</option>';
+                rawNames.forEach(name => sel.innerHTML += `<option value="${name}">${name}</option>`);
+            });
+            renderAliasRulesList();
+        }
+        function closeAliasModal() { document.getElementById('aliasModal').classList.add('hidden'); }
+        function renderAliasRulesList() {
+            const listEl = document.getElementById('aliasRulesList'); listEl.innerHTML = '';
+            const keys = Object.keys(nameAliases);
+            if (keys.length === 0) { listEl.innerHTML = '<div class="text-sm text-gray-400 italic text-center py-4">無規則</div>'; return; }
+            keys.forEach(source => { listEl.innerHTML += `<div class="flex justify-between items-center p-2 bg-white border rounded text-sm"><div><span class="text-red-500 line-through">${source}</span> ➔ <span class="text-green-600 font-medium">${nameAliases[source]}</span></div><button onclick="removeAliasRule('${source}')" class="text-gray-400 hover:text-red-500">刪除</button></div>`; });
+        }
+        function addAliasRule() {
+            const s = document.getElementById('sourceNameSelect').value; const t = document.getElementById('targetNameSelect').value;
+            if (s && t && s !== t) { nameAliases[s] = t; localStorage.setItem('traineeNameAliases', JSON.stringify(nameAliases)); renderAliasRulesList(); initDashboard(); }
+        }
+        function removeAliasRule(source) { delete nameAliases[source]; localStorage.setItem('traineeNameAliases', JSON.stringify(nameAliases)); renderAliasRulesList(); initDashboard(); }
+    </script>
+</body>
+</html>
